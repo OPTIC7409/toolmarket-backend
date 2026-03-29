@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - '55432:5432'
+    environment:
+      POSTGRES_USER: toolmarket
+      POSTGRES_PASSWORD: toolmarket
+      POSTGRES_DB: toolmarket
+    volumes:
+      - toolmarket_pg:/var/lib/postgresql/data
+
+volumes:
+  toolmarket_pg:

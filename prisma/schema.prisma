@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  BUYER
+  SELLER
+  BOTH
+  ADMIN
+}
+
+enum StripeAccountStatus {
+  PENDING
+  ACTIVE
+  RESTRICTED
+}
+
+enum ListingCategory {
+  TRADING_BOTS
+  LEAD_GENERATION
+  SOCIAL_MEDIA
+  ECOMMERCE
+  SCRAPERS
+  RESEARCH
+  PRODUCTIVITY
+  FINANCE
+}
+
+enum RiskLevel {
+  SAFE
+  USE_AT_OWN_RISK
+  NOT_LISTED
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  LIVE
+  SUSPENDED
+}
+
+enum PurchaseStatus {
+  PENDING
+  COMPLETED
+  DISPUTED
+  REFUNDED
+  FAILED
+}
+
+enum PayoutStatus {
+  HOLDING
+  SCHEDULED
+  PAID
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+}
+
+enum VerifiedBadgeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  passwordHash     String
+  name             String
+  avatarUrl        String?
+  role             UserRole  @default(BUYER)
+  stripeCustomerId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sellerProfile SellerProfile?
+  purchases     Purchase[]     @relation("BuyerPurchases")
+  reviews       Review[]
+  disputes      Dispute[]
+}
+
+model SellerProfile {
+  id                   String              @id @default(uuid())
+  userId               String              @unique
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug                 String              @unique
+  stripeAccountId      String?
+  stripeAccountStatus  StripeAccountStatus @default(PENDING)
+  commissionRate       Float               @default(0.15)
+  isPro                Boolean             @default(false)
+  isVerified           Boolean             @default(false)
+  bio                  String?
+  websiteUrl           String?
+  twitterUrl           String?
+  supportEmail         String?
+  businessName         String?
+  totalSales           Int                 @default(0)
+  totalRevenue         Decimal             @default(0) @db.Decimal(12, 2)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  listings                 Listing[]
+  purchases                Purchase[]                @relation("SellerPurchases")
+  verifiedBadgeRequests    VerifiedBadgeRequest[]
+}
+
+model Listing {
+  id                 String          @id @default(uuid())
+  sellerId           String
+  seller             SellerProfile   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  title              String
+  description        String          @db.Text
+  price              Decimal         @db.Decimal(12, 2)
+  category           ListingCategory
+  riskLevel          RiskLevel       @default(SAFE)
+  demoVideoUrl       String
+  fileUrl            String?
+  accessInstructions String?         @db.Text
+  status             ListingStatus   @default(DRAFT)
+  isVerified         Boolean         @default(false)
+  tags               String[]        @default([])
+  viewCount          Int             @default(0)
+  purchaseCount      Int             @default(0)
+  featured           Boolean         @default(false)
+  features           String?         @db.Text
+  documentationUrl   String?
+  licenseType        String?
+  refundPolicy       String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  purchases Purchase[]
+  reviews   Review[]
+}
+
+model Purchase {
+  id                    String         @id @default(uuid())
+  buyerId               String
+  buyer                 User           @relation("BuyerPurchases", fields: [buyerId], references: [id], onDelete: Cascade)
+  listingId             String
+  listing               Listing        @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  sellerId              String
+  seller                SellerProfile  @relation("SellerPurchases", fields: [sellerId], references: [id], onDelete: Restrict)
+  amount                Decimal        @db.Decimal(12, 2)
+  platformFee           Decimal        @db.Decimal(12, 2)
+  sellerPayout          Decimal        @db.Decimal(12, 2)
+  stripePaymentIntentId String?        @unique
+  stripeTransferId      String?
+  status                PurchaseStatus @default(PENDING)
+  payoutStatus          PayoutStatus   @default(HOLDING)
+  payoutScheduledAt     DateTime?
+  payoutPaused          Boolean        @default(false)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  review  Review?
+  dispute Dispute?
+
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([listingId])
+  @@index([payoutStatus, payoutScheduledAt])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  purchaseId String   @unique
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  buyerId    String
+  buyer      User     @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  rating     Int
+  comment    String   @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([listingId])
+}
+
+model Dispute {
+  id             String         @id @default(uuid())
+  purchaseId     String         @unique
+  purchase       Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  buyerId        String
+  buyer          User           @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  reason         String         @db.Text
+  status         DisputeStatus  @default(OPEN)
+  resolvedAt     DateTime?
+  resolutionNote String?        @db.Text
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model WaitlistEntry {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model VerifiedBadgeRequest {
+  id        String                      @id @default(uuid())
+  sellerId  String
+  seller    SellerProfile               @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  status    VerifiedBadgeRequestStatus  @default(PENDING)
+  notes     String?                     @db.Text
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @updatedAt
+
+  @@index([sellerId])
+}
