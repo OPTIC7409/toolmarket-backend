@@ -13,6 +13,7 @@ need_cmd() {
 }
 
 need_cmd node
+need_cmd python3
 
 if [[ ! -f "$ENV_FILE" ]]; then
   if [[ -f "$EXAMPLE_FILE" ]]; then
@@ -42,15 +43,36 @@ update_env_kv() {
   local key="$1"
   local value="$2"
 
-  # Escape backslashes and ampersands for perl replacement.
-  local escaped
-  escaped="$(printf '%s' "$value" | perl -pe 's/([\\\\&])/\\\\$1/g')"
+  python3 - "$ENV_FILE" "$key" "$value" <<'PY'
+import sys
 
-  if grep -qE "^${key}=" "$ENV_FILE"; then
-    perl -0777 -i -pe "s/^${key}=.*\\n/${key}=\"${escaped}\"\\n/m" "$ENV_FILE"
-  else
-    printf '\n%s="%s"\n' "$key" "$value" >>"$ENV_FILE"
-  fi
+path, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+  with open(path, "r", encoding="utf-8") as f:
+    lines = f.read().splitlines(True)
+except FileNotFoundError:
+  lines = []
+
+needle = f"{key}="
+out = []
+replaced = False
+for line in lines:
+  if line.startswith(needle):
+    out.append(f'{key}="{value}"\n')
+    replaced = True
+  else:
+    out.append(line)
+
+if not replaced:
+  if out and not out[-1].endswith("\n"):
+    out[-1] = out[-1] + "\n"
+  if out and out[-1].strip() != "":
+    out.append("\n")
+  out.append(f'{key}="{value}"\n')
+
+with open(path, "w", encoding="utf-8") as f:
+  f.write("".join(out))
+PY
 }
 
 echo "Updating backend env for CORS…"
