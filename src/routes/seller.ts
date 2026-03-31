@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { ListingStatus, PurchaseStatus, PayoutStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { getOrCreateSellerProfile } from '../lib/sellerProfile.js';
 import { HttpError } from '../lib/httpError.js';
 import { authenticate, type AuthedRequest } from '../middleware/authenticate.js';
 import { requireRole } from '../middleware/requireRole.js';
@@ -13,14 +14,32 @@ function listingRatingAgg(reviews: { rating: number }[]) {
   return Math.round((sum / reviews.length) * 10) / 10;
 }
 
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Last 7 calendar days (UTC), oldest → newest, for charting seller payout by day. */
+function buildRevenueByDayUtc(now: Date, purchases: { sellerPayout: unknown; createdAt: Date }[]) {
+  const buckets: { date: string; day: string; revenue: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    const date = d.toISOString().slice(0, 10);
+    buckets.push({ date, day: DAY_LABELS[d.getUTCDay()] ?? '?', revenue: 0 });
+  }
+  const byDate = new Map(buckets.map((b) => [b.date, b]));
+  for (const p of purchases) {
+    const key = p.createdAt.toISOString().slice(0, 10);
+    const b = byDate.get(key);
+    if (b) b.revenue += Number(p.sellerPayout);
+  }
+  return buckets;
+}
+
 export function createSellerRouter(env: Env) {
   const router = Router();
 
   router.get('/listings', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      const profile = await getOrCreateSellerProfile(r.user!);
       const listings = await prisma.listing.findMany({
         where: { sellerId: profile.id },
         orderBy: { updatedAt: 'desc' },
@@ -63,13 +82,14 @@ export function createSellerRouter(env: Env) {
   router.get('/dashboard', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
+      await getOrCreateSellerProfile(r.user!);
       const profile = await prisma.sellerProfile.findUnique({
         where: { userId: r.user!.id },
         include: {
           listings: { include: { reviews: { select: { rating: true } } } },
         },
       });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      if (!profile) throw new HttpError(500, 'Seller profile not found');
 
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -99,6 +119,21 @@ export function createSellerRouter(env: Env) {
         _sum: { sellerPayout: true },
       });
 
+      const weekStartUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6));
+      weekStartUtc.setUTCHours(0, 0, 0, 0);
+      const weekEndUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+
+      const weekPurchases = await prisma.purchase.findMany({
+        where: {
+          sellerId: profile.id,
+          status: PurchaseStatus.COMPLETED,
+          createdAt: { gte: weekStartUtc, lt: weekEndUtc },
+        },
+        select: { sellerPayout: true, createdAt: true },
+      });
+
+      const revenueByDay = buildRevenueByDayUtc(now, weekPurchases);
+
       const activeListings = profile.listings.filter(
         (l) => l.status === ListingStatus.LIVE || l.status === ListingStatus.PENDING_REVIEW
       ).length;
@@ -114,6 +149,7 @@ export function createSellerRouter(env: Env) {
         totalSales: profile.totalSales,
         totalRevenue: Number(profile.totalRevenue),
         thisMonthRevenue: Number(thisMonthRevenue._sum.sellerPayout ?? 0),
+        revenueByDay,
         pendingPayout: Number(pendingPayout._sum.sellerPayout ?? 0),
         activeListings,
         commissionRate: profile.commissionRate,
@@ -143,8 +179,7 @@ export function createSellerRouter(env: Env) {
   router.get('/payouts', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      const profile = await getOrCreateSellerProfile(r.user!);
 
       const purchases = await prisma.purchase.findMany({
         where: { sellerId: profile.id, status: PurchaseStatus.COMPLETED },

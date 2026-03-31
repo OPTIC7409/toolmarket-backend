@@ -12,6 +12,7 @@ import {
   patchListingSchema,
   listingsQuerySchema,
 } from '../validation/schemas.js';
+import { getOrCreateSellerProfile } from '../lib/sellerProfile.js';
 import { listingCategoryFromFormValue, categoryDisplayLabel } from '../lib/category.js';
 import type { ListingCategory } from '@prisma/client';
 import type { Env } from '../config/env.js';
@@ -256,8 +257,7 @@ export function createListingsRouter(env: Env) {
         typeof categoryRaw === 'string' ? listingCategoryFromFormValue(categoryRaw) : categoryRaw;
 
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      const profile = await getOrCreateSellerProfile(r.user!);
 
       const tags = normalizeTags(body.tags);
       const docUrl = (body.documentationUrl || body.documentation || '').trim() || null;
@@ -308,8 +308,7 @@ export function createListingsRouter(env: Env) {
       const id = singleParam(req.params.id);
       const body = req.body as z.infer<typeof patchListingSchema>;
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      const profile = await getOrCreateSellerProfile(r.user!);
 
       const existing = await prisma.listing.findUnique({ where: { id } });
       if (!existing) throw new HttpError(404, 'Listing not found');

@@ -20,6 +20,76 @@ export function createAdminRouter(env: Env, stripe: Stripe) {
   const router = Router();
   const guard = [authenticate(env), requireRole('ADMIN')];
 
+  router.get('/waitlist', ...guard, async (_req, res, next) => {
+    try {
+      const entries = await prisma.waitlistEntry.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, email: true, createdAt: true },
+      });
+      return res.json({ items: entries });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get('/listings/pending', ...guard, async (_req, res, next) => {
+    try {
+      const listings = await prisma.listing.findMany({
+        where: { status: ListingStatus.PENDING_REVIEW },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          seller: {
+            include: { user: { select: { id: true, email: true, name: true } } },
+          },
+        },
+      });
+      return res.json({
+        items: listings.map((l) => ({
+          id: l.id,
+          title: l.title,
+          description: l.description,
+          price: Number(l.price),
+          category: l.category,
+          riskLevel: l.riskLevel,
+          demoVideoUrl: l.demoVideoUrl,
+          status: l.status,
+          createdAt: l.createdAt,
+          sellerId: l.sellerId,
+          sellerSlug: l.seller.slug,
+          sellerEmail: l.seller.user.email,
+          sellerName: l.seller.user.name,
+        })),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get('/sellers/unverified', ...guard, async (_req, res, next) => {
+    try {
+      const profiles = await prisma.sellerProfile.findMany({
+        where: { isVerified: false },
+        orderBy: { createdAt: 'desc' },
+        include: { user: { select: { id: true, email: true, name: true } } },
+      });
+      return res.json({
+        items: profiles.map((p) => ({
+          id: p.id,
+          slug: p.slug,
+          businessName: p.businessName,
+          supportEmail: p.supportEmail,
+          stripeAccountStatus: p.stripeAccountStatus,
+          totalSales: p.totalSales,
+          createdAt: p.createdAt,
+          userEmail: p.user.email,
+          userName: p.user.name,
+        })),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   router.patch('/listings/:id/approve', ...guard, async (req, res, next) => {
     try {
       const listing = await prisma.listing.update({

@@ -54,8 +54,10 @@ export function optionalAuthenticate(env: Env) {
 
 export function hasRole(userRole: UserRole, required: UserRole | UserRole[]): boolean {
   const need = Array.isArray(required) ? required : [required];
+  // Routes that explicitly require the ADMIN role only.
   if (need.includes('ADMIN')) return userRole === 'ADMIN';
-  if (userRole === 'ADMIN') return false;
+  // Platform admins may use seller/buyer APIs (e.g. create listings, support).
+  if (userRole === 'ADMIN') return true;
 
   const satisfies = (r: UserRole): boolean => {
     if (r === 'BUYER') return userRole === 'BUYER' || userRole === 'BOTH';

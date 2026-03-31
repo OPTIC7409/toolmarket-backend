@@ -1,27 +1,15 @@
 import { Router } from 'express';
-import type { Prisma, UserRole } from '@prisma/client';
+import type { UserRole } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { signAccessToken } from '../lib/jwt.js';
 import { HttpError } from '../lib/httpError.js';
-import { slugify, uniqueSlugSuffix } from '../lib/slug.js';
+import { ensureUniqueSellerSlug } from '../lib/sellerProfile.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { registerSchema, loginSchema } from '../validation/schemas.js';
 import type { LoginInput, RegisterInput } from '../validation/schemas.js';
 import { authenticate, type AuthedRequest } from '../middleware/authenticate.js';
 import type { Env } from '../config/env.js';
-
-type DbClient = Prisma.TransactionClient | typeof prisma;
-
-async function ensureUniqueSellerSlug(tx: DbClient, base: string): Promise<string> {
-  let candidate = slugify(base);
-  for (let i = 0; i < 8; i += 1) {
-    const exists = await tx.sellerProfile.findUnique({ where: { slug: candidate } });
-    if (!exists) return candidate;
-    candidate = `${slugify(base)}-${uniqueSlugSuffix()}`;
-  }
-  throw new HttpError(500, 'Could not allocate seller slug');
-}
 
 function mapRegisterRole(role: string): Exclude<UserRole, 'ADMIN'> {
   if (role === 'seller') return 'SELLER';

@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import Stripe from 'stripe';
 import { StripeAccountStatus, PurchaseStatus, PayoutStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { getOrCreateSellerProfile } from '../lib/sellerProfile.js';
 import { HttpError } from '../lib/httpError.js';
 import { createStripeClient } from '../lib/stripe.js';
 import { authenticate, type AuthedRequest } from '../middleware/authenticate.js';
@@ -104,8 +105,7 @@ export function createStripeConnectRouter(env: Env, stripe: Stripe) {
   router.post('/connect/create-account', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile) throw new HttpError(400, 'Seller profile missing');
+      const profile = await getOrCreateSellerProfile(r.user!);
       if (profile.stripeAccountId) {
         return res.json({ accountId: profile.stripeAccountId, existing: true });
       }
@@ -135,8 +135,8 @@ export function createStripeConnectRouter(env: Env, stripe: Stripe) {
   router.post('/connect/create-onboarding-link', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile?.stripeAccountId) throw new HttpError(400, 'Create a Connect account first');
+      const profile = await getOrCreateSellerProfile(r.user!);
+      if (!profile.stripeAccountId) throw new HttpError(400, 'Create a Connect account first');
       const link = await stripe.accountLinks.create({
         account: profile.stripeAccountId,
         refresh_url: `${env.FRONTEND_URL}/onboarding/seller`,
@@ -152,8 +152,8 @@ export function createStripeConnectRouter(env: Env, stripe: Stripe) {
   router.get('/connect/account-status', authenticate(env), requireRole('SELLER'), async (req, res, next) => {
     try {
       const r = req as AuthedRequest;
-      const profile = await prisma.sellerProfile.findUnique({ where: { userId: r.user!.id } });
-      if (!profile?.stripeAccountId) throw new HttpError(400, 'Stripe account not linked');
+      const profile = await getOrCreateSellerProfile(r.user!);
+      if (!profile.stripeAccountId) throw new HttpError(400, 'Stripe account not linked');
       const account = await stripe.accounts.retrieve(profile.stripeAccountId);
       const status = mapAccountStatus(account);
       await prisma.sellerProfile.update({
